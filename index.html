@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Genome Indexing Explorer</title>
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<header>
+  <h1>Genome Indexing Explorer</h1>
+  <p>Suffix trie &middot; suffix tree &middot; suffix array &middot; Burrows&ndash;Wheeler transform with FM-index. Runs entirely in your browser.</p>
+</header>
+
+<main>
+  <section class="controls">
+    <div class="control-row">
+      <div class="field">
+        <label for="text-input">Text T (terminator <code>$</code> is appended automatically)</label>
+        <input type="text" id="text-input" value="banana" spellcheck="false" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="pattern-input">Pattern P</label>
+        <input type="text" id="pattern-input" value="ana" spellcheck="false" autocomplete="off">
+      </div>
+      <button id="build-btn" class="primary" type="button">Build indexes</button>
+    </div>
+
+    <div class="examples">
+      <span>Examples:</span>
+      <button type="button" data-example="banana">banana</button>
+      <button type="button" data-example="mississippi">mississippi</button>
+      <button type="button" data-example="ACGTACGTAC">ACGTACGTAC</button>
+      <button type="button" data-example="GATTACA">GATTACA</button>
+      <button type="button" data-example="AAAAAA">AAAAAA</button>
+    </div>
+
+    <div class="options">
+      <label title="Off: suffixes longer than 40 characters are cut off with an ellipsis so the table stays readable. On: every suffix is printed in full, which shows directly that the n suffixes together occupy O(n^2) characters - the reason the suffix array stores only start positions.">
+        <input type="checkbox" id="opt-suffixes"><span>Show full suffixes in the suffix array</span></label>
+      <label title="Off: one row per rotation with only the F and L columns plus SA and LF. On: the complete n x n matrix of sorted rotations, one character per cell. Only feasible for short texts, but it makes the last-first correspondence visible.">
+        <input type="checkbox" id="opt-bwm"><span>Show the full Burrows&ndash;Wheeler matrix</span></label>
+      <label title="Off: only the totals row Occ[c][n]. On: all n+1 rows of the rank table. Real implementations store only sampled checkpoints instead, since the full table needs sigma*(n+1) counters.">
+        <input type="checkbox" id="opt-occ"><span>Show the full Occ table</span></label>
+      <label title="Adds LCP[i], the length of the longest common prefix of the suffixes at ranks i-1 and i. Suffix array + LCP array together can simulate a suffix tree traversal.">
+        <input type="checkbox" id="opt-lcp"><span>Show LCP column</span></label>
+    </div>
+
+    <div class="notice" id="notice"></div>
+  </section>
+
+  <div class="tabs" role="tablist">
+    <button type="button" role="tab" data-tab="overview" aria-selected="true">Overview</button>
+    <button type="button" role="tab" data-tab="trie" aria-selected="false">Suffix trie</button>
+    <button type="button" role="tab" data-tab="tree" aria-selected="false">Suffix tree</button>
+    <button type="button" role="tab" data-tab="array" aria-selected="false">Suffix array</button>
+    <button type="button" role="tab" data-tab="bwt" aria-selected="false">BWT &amp; FM-index</button>
+  </div>
+
+  <section class="panel" id="panel-overview" role="tabpanel">
+    <h2>Overview</h2>
+    <details class="explain">
+      <summary>Why index a genome at all?</summary>
+      <div>
+        <p>Aligning millions of short reads against a reference genome by scanning the genome once per read
+          is hopeless: a single pass over the human genome costs about 3&middot;10<sup>9</sup> character
+          comparisons, and read sets contain 10<sup>7</sup>&ndash;10<sup>9</sup> reads. The fix is to
+          pre-process the <em>text</em> once into an index, after which every <em>pattern</em> is located in
+          time proportional to the pattern length, independent of the genome length.</p>
+        <p>All four structures shown here index the same object &mdash; the set of all suffixes of T &mdash;
+          and differ only in how that set is represented:</p>
+        <ul>
+          <li><strong>Suffix trie:</strong> all suffixes as explicit character-by-character paths.</li>
+          <li><strong>Suffix tree:</strong> the same paths with non-branching runs collapsed.</li>
+          <li><strong>Suffix array:</strong> only the sorted start positions of the suffixes.</li>
+          <li><strong>FM-index:</strong> the BWT plus two small rank tables, from which the same search is
+            done backwards without storing suffixes at all.</li>
+        </ul>
+        <p>The sentinel <code>$</code>, appended to T and defined to be smaller than every other symbol,
+          guarantees that no suffix is a prefix of another. That makes every suffix end in its own leaf and
+          makes rotations sort exactly like suffixes.</p>
+      </div>
+    </details>
+    <div class="stats" id="overview-stats"></div>
+    <h3>Indexed text</h3>
+    <details class="explain">
+      <summary>About this display</summary>
+      <div>
+        <p>The text T with the appended sentinel, above a ruler giving the last digit of each 0-based
+          position. Every number you see elsewhere in the app &mdash; leaf labels in the trees, SA entries,
+          reported match positions &mdash; refers to these positions.</p>
+      </div>
+    </details>
+    <div class="mono-block" id="overview-text"></div>
+    <h3>Index comparison</h3>
+    <details class="explain">
+      <summary>How to read this table</summary>
+      <div>
+        <p>n = |T$|, m = |P|, occ = number of occurrences, &sigma; = alphabet size.</p>
+        <ul>
+          <li><strong>Suffix trie:</strong> &Theta;(n&sup2;) nodes in the worst case. For the human genome
+            this is roughly 10<sup>19</sup> nodes &mdash; purely a teaching device.</li>
+          <li><strong>Suffix tree:</strong> exactly n leaves and at most n&minus;1 internal nodes, so O(n)
+            nodes; but with child pointers and edge labels it costs ~15&ndash;20 bytes per base, i.e. tens of
+            gigabytes for a mammalian genome.</li>
+          <li><strong>Suffix array:</strong> n integers, 4&ndash;8 bytes per base, and O(m log n) search.
+            Adding the LCP array brings it back to O(m + log n).</li>
+          <li><strong>FM-index:</strong> the BWT is as compressible as the text, and with sampled Occ
+            checkpoints and a sampled suffix array the whole index for a human genome fits in a few
+            gigabytes. This is what Bowtie, BWA and HISAT use.</li>
+        </ul>
+        <p>The "space (this input)" column counts actual objects built in this page, so you can watch the
+          trie explode while the other three grow linearly.</p>
+      </div>
+    </details>
+    <div class="scroller"><table id="overview-table"></table></div>
+    <p class="legend">Space figures are counted for this concrete input: trie and tree node counts are exact,
+      the suffix array stores n integers, the FM-index stores the BWT string plus the C and Occ tables.</p>
+  </section>
+
+  <section class="panel" id="panel-trie" role="tabpanel" hidden>
+    <h2>Suffix trie</h2>
+    <p class="hint">Every suffix of T$ is inserted character by character. Leaves are labelled with the start
+      position of the suffix they spell. The path matching the pattern P is highlighted.</p>
+    <details class="explain">
+      <summary>What is a suffix trie?</summary>
+      <div>
+        <p>A trie (from re<em>trie</em>val) is a rooted tree in which every edge carries one symbol, so each
+          node corresponds to the string spelled on the path from the root. The suffix trie of T$ is the trie
+          containing all n suffixes.</p>
+        <p><strong>Construction:</strong> take each suffix in turn and walk down from the root, creating a
+          child whenever the needed symbol is missing. Because <code>$</code> occurs only once, every suffix
+          ends in a distinct leaf, which is labelled with its start position in T.</p>
+        <p><strong>Searching P:</strong> spell P from the root. If you get stuck, P does not occur. If you
+          arrive at a node, every leaf below it is one occurrence, so the number of matches equals the number
+          of leaves in that subtree. The highlighted path shows exactly this walk for the current pattern.</p>
+        <p><strong>Key insight:</strong> every substring of T is a prefix of some suffix, so <em>every</em>
+          substring is spelled by a path from the root. Searching becomes tree navigation in O(m) steps.</p>
+        <p><strong>Cost:</strong> the suffixes have total length n(n+1)/2, and shared prefixes are the only
+          savings, so the trie has &Theta;(n&sup2;) nodes in the worst case (try <code>AAAAAA</code>). This is
+          why the compressed version on the next tab exists.</p>
+      </div>
+    </details>
+    <div class="stats" id="trie-stats"></div>
+    <div class="zoom-bar">
+      <label for="trie-zoom">Zoom</label>
+      <input type="range" id="trie-zoom" min="0.4" max="2" step="0.1" value="1">
+    </div>
+    <div class="scroller tree-scroller" id="trie-canvas"></div>
+  </section>
+
+  <section class="panel" id="panel-tree" role="tabpanel" hidden>
+    <h2>Suffix tree</h2>
+    <p class="hint">The suffix trie with every non-branching path collapsed into a single edge. The tree has
+      exactly n leaves and fewer than n internal nodes, so it needs O(n) space instead of O(n&sup2;).</p>
+    <details class="explain">
+      <summary>What is a suffix tree?</summary>
+      <div>
+        <p>A suffix tree is a suffix trie in which every chain of nodes with exactly one child is merged into
+          a single edge labelled with the whole substring. Compare the two drawings: the paths are identical,
+          only the number of nodes differs.</p>
+        <p><strong>Why it is O(n):</strong> after compression every internal node branches, so it has at least
+          two children. A tree with n leaves in which every internal node has &ge; 2 children has at most
+          n&minus;1 internal nodes &mdash; regardless of the text. Storing edge labels as (start, end) offsets
+          into T rather than as copied strings keeps each edge to O(1) space as well.</p>
+        <p><strong>Searching P:</strong> follow edges from the root, matching P against whole edge labels; the
+          walk ends either inside an edge or on a node. All leaf labels below that point are the occurrence
+          positions, giving O(m + occ) after construction.</p>
+        <p><strong>Vocabulary:</strong> the <em>string depth</em> of a node is the length of the string it
+          spells (not its depth in the drawing). Internal nodes correspond exactly to substrings that occur at
+          least twice and are followed by at least two different symbols &mdash; these are the
+          <em>right-branching repeats</em>, which is why suffix trees solve repeat finding, longest common
+          substring and maximal-exact-match problems so directly.</p>
+        <p><strong>Construction:</strong> this page compresses the trie, which is simple but quadratic.
+          Ukkonen's algorithm builds the same tree in O(n) time and is the standard method; the result is
+          identical, so nothing here depends on that choice.</p>
+      </div>
+    </details>
+    <div class="stats" id="tree-stats"></div>
+    <div class="zoom-bar">
+      <label for="tree-zoom">Zoom</label>
+      <input type="range" id="tree-zoom" min="0.4" max="2" step="0.1" value="1">
+    </div>
+    <div class="scroller tree-scroller" id="tree-canvas"></div>
+  </section>
+
+  <section class="panel" id="panel-array" role="tabpanel" hidden>
+    <h2>Suffix array</h2>
+    <p class="hint">The start positions of all suffixes, sorted lexicographically. It is the leaf order of the
+      suffix tree. Matches of P form one contiguous block, found by binary search.</p>
+    <details class="explain">
+      <summary>What is a suffix array?</summary>
+      <div>
+        <p>SA is the permutation of the positions 0&hellip;n&minus;1 that sorts the suffixes of T$
+          lexicographically: SA[i] is the start position of the i-th smallest suffix. Nothing else is stored
+          &mdash; the suffixes themselves are read back from T on demand.</p>
+        <p><strong>Relation to the suffix tree:</strong> if children are ordered by their first symbol, then
+          reading the leaves of the suffix tree from left to right gives exactly SA. Compare the leaf labels
+          on the previous tab with the SA vector below.</p>
+        <p><strong>Construction:</strong> this page simply sorts the position array with a general-purpose
+          comparison sort, which is O(n&sup2; log n) in the worst case but perfectly clear. Production tools
+          use O(n) algorithms (DC3/skew, SA-IS) or O(n log n) prefix doubling; the resulting array is the
+          same.</p>
+      </div>
+    </details>
+    <div class="stats" id="array-stats"></div>
+    <h3>SA as a vector</h3>
+    <details class="explain">
+      <summary>About this display</summary>
+      <div>
+        <p>This is the entire index: n integers. At 4 bytes per entry a 3 Gbp genome needs about 12 GB, which
+          is why the FM-index is preferred in practice &mdash; but the suffix array remains the conceptual
+          bridge between trees and the BWT.</p>
+      </div>
+    </details>
+    <div class="mono-block" id="array-vector"></div>
+    <h3>Sorted suffixes</h3>
+    <details class="explain">
+      <summary>How to read this table, and what LCP is</summary>
+      <div>
+        <p><strong>rank i</strong> is the row index, <strong>SA[i]</strong> the start position in T, and the
+          last column shows the suffix beginning there. The suffix column is for illustration only; it is not
+          part of the index.</p>
+        <p><strong>Why search works:</strong> all suffixes that start with P are lexicographically adjacent,
+          so the occurrences of P form one contiguous block of rows. Two binary searches find the first and
+          last row of the block, each comparison costing up to m symbol comparisons &mdash; hence O(m log n).
+          Highlighted rows are the block for the current pattern.</p>
+        <p><strong>LCP[i]</strong> is the length of the longest common prefix of the suffixes at ranks
+          i&minus;1 and i, with LCP[0] = 0 by convention. It measures how much of the previous row the current
+          row repeats, so tall LCP values mark repeats in T.</p>
+        <p>LCP values correspond to the string depths of the internal nodes of the suffix tree: the LCP of two
+          adjacent leaves is the depth of their lowest common ancestor. Consequently SA + LCP can emulate a
+          suffix tree traversal, and the binary search can be sped up to O(m + log n). Kasai's algorithm
+          computes LCP in O(n) from SA; this page uses direct comparison, which is enough at these sizes.</p>
+      </div>
+    </details>
+    <div class="scroller"><table id="array-table"></table></div>
+    <div class="search-result" id="array-search"></div>
+  </section>
+
+  <section class="panel" id="panel-bwt" role="tabpanel" hidden>
+    <h2>Burrows&ndash;Wheeler transform and FM-index</h2>
+    <p class="hint">Sorting all rotations of T$ gives the BW matrix; its last column L is the BWT. The FM-index
+      adds the C table and the Occ table, which together make backward search possible without the matrix.</p>
+    <details class="explain">
+      <summary>What is the BWT, and why is it used for read mapping?</summary>
+      <div>
+        <p>The Burrows&ndash;Wheeler transform is a reversible permutation of the symbols of T$. It was
+          invented for compression: it groups symbols that appear in similar contexts, producing long runs of
+          equal symbols (see the run count above) that compress extremely well.</p>
+        <p>Two properties make it an index rather than just a compressor: it is <em>invertible</em>, so the
+          text need not be stored separately, and it supports <em>backward search</em>, so patterns can be
+          located directly in the transformed string. An FM-index (Ferragina&ndash;Manzini) is the BWT plus
+          the small auxiliary tables C and Occ. This combination is the core of Bowtie, BWA and HISAT.</p>
+      </div>
+    </details>
+    <div class="stats" id="bwt-stats"></div>
+
+    <h3>BWT string L</h3>
+    <details class="explain">
+      <summary>What L and F are</summary>
+      <div>
+        <p><strong>L</strong> (last column) is the BWT itself: for each sorted rotation, the symbol that
+          <em>precedes</em> its starting position in T, i.e. L[k] = T[(SA[k] &minus; 1) mod n]. So L lists the
+          preceding symbols of all suffixes, ordered by the suffix that follows them.</p>
+        <p><strong>F</strong> (first column) is simply all symbols of T in sorted order, so it is fully
+          described by the C table and needs no storage.</p>
+        <p>Only L is kept; F is reconstructed, and the text itself can be discarded.</p>
+      </div>
+    </details>
+    <div class="mono-block" id="bwt-string"></div>
+
+    <h3>Burrows&ndash;Wheeler matrix</h3>
+    <details class="explain">
+      <summary>How the matrix is built and what the LF property means</summary>
+      <div>
+        <p><strong>Construction (conceptually):</strong> write down all n cyclic rotations of T$ and sort them
+          lexicographically. The last column of the resulting matrix is the BWT.</p>
+        <p><strong>Shortcut used here:</strong> because <code>$</code> occurs exactly once and is the smallest
+          symbol, no rotation can wrap past it during a comparison, so rotations sort exactly like suffixes.
+          Row k is therefore the rotation starting at SA[k], and the matrix is never materialised in a real
+          implementation &mdash; it is shown here only for teaching.</p>
+        <p><strong>Last-to-first (LF) mapping:</strong> the i-th occurrence of a symbol c in L and the i-th
+          occurrence of c in F denote the <em>same</em> position of T. Reason: rows containing c in L are
+          sorted by the suffix that follows that c, and rows starting with c in F are sorted by the suffix
+          that follows that same c &mdash; the relative order is identical. The LF column gives, for each row
+          k, the row where L[k] reappears in F, computed as LF[k] = C[L[k]] + Occ[L[k]][k].</p>
+        <p>Repeatedly following LF from the row of <code>$</code> walks through T backwards; this is exactly
+          the reconstruction shown at the bottom of the page, and the same identity drives backward search.</p>
+      </div>
+    </details>
+    <div class="scroller"><table id="bwm-table"></table></div>
+
+    <h3>C table</h3>
+    <details class="explain">
+      <summary>What C[c] is</summary>
+      <div>
+        <p>C[c] is the number of symbols in T$ that are strictly smaller than c, i.e. the index of the first
+          row whose first column equals c. Since F is sorted, the block of rows beginning with c is exactly
+          [C[c], C[c] + count(c)).</p>
+        <p>C has only &sigma; entries (five for DNA with a sentinel), so its cost is negligible; it is what
+          makes column F unnecessary to store.</p>
+      </div>
+    </details>
+    <div class="scroller"><table id="c-table"></table></div>
+
+    <h3>Occ table</h3>
+    <details class="explain">
+      <summary>What Occ[c][i] is, and how real indexes store it</summary>
+      <div>
+        <p>Occ[c][i] (also written rank<sub>c</sub>) counts the occurrences of symbol c in the prefix
+          L[0&hellip;i&minus;1], i.e. in the first i rows. Row i = 0 is all zeros, and row i = n gives the
+          total number of occurrences of each symbol in T$.</p>
+        <p>This single primitive &mdash; "how many c's occur before row i?" &mdash; is what makes backward
+          search work in constant time per pattern symbol.</p>
+        <p><strong>In practice:</strong> a full table needs &sigma;&middot;(n+1) counters, which would dwarf
+          the text. Real FM-indexes store checkpoints every 64&ndash;512 rows plus a bit-packed BWT, and count
+          the remaining symbols on the fly with word-level popcount operations. That keeps the lookup O(1)
+          while adding only a small fraction of the index size.</p>
+      </div>
+    </details>
+    <div class="scroller"><table id="occ-table"></table></div>
+
+    <h3>Backward search for P</h3>
+    <details class="explain">
+      <summary>How backward search works, step by step</summary>
+      <div>
+        <p>The algorithm maintains a half-open interval [sp, ep) of matrix rows whose rows begin with the
+          suffix of P processed so far. It starts with the full range [0, n) and consumes P from
+          <em>right to left</em>, one symbol per step:</p>
+        <p class="formula">sp &larr; C[c] + Occ[c][sp]&nbsp;&nbsp;&nbsp;&nbsp;ep &larr; C[c] + Occ[c][ep]</p>
+        <p>Interpretation: among the current rows, keep those preceded by c (that is the Occ part), and map
+          them into the block of rows starting with c (that is the C part) &mdash; the LF mapping applied to a
+          whole interval at once. Prepending c to the matched suffix thus takes O(1) time.</p>
+        <p>If sp &ge; ep the interval is empty and P does not occur; the search stops early. Otherwise, after
+          all m symbols, ep &minus; sp is the number of occurrences &mdash; obtained without ever looking at
+          the text, in O(m) total time regardless of genome size.</p>
+        <p><strong>Reporting positions</strong> still needs SA[k] for each row k in the interval. Storing the
+          full suffix array would defeat the purpose, so implementations sample it (e.g. every 32nd entry) and
+          walk LF until a sampled row is reached, trading a little time for a large space saving. This page
+          keeps the full SA for clarity.</p>
+        <p>The table lists each step with the concrete numbers substituted into the two formulas, so the
+          arithmetic can be followed by hand.</p>
+      </div>
+    </details>
+    <div class="scroller"><table id="fm-steps"></table></div>
+    <div class="search-result" id="fm-result"></div>
+
+    <h3>Reconstruction of T by LF mapping</h3>
+    <details class="explain">
+      <summary>How the text is recovered from L alone</summary>
+      <div>
+        <p>Start in the row k whose L entry is <code>$</code>; L[k] is then the last symbol of T$. Apply
+          k &larr; LF[k] and output L[k] again, prepending each symbol. After n steps the original T$ has been
+          rebuilt from the BWT alone, which proves the transform is lossless &mdash; and explains why the
+          original text does not need to be stored next to the index.</p>
+      </div>
+    </details>
+    <div class="mono-block" id="bwt-inverse"></div>
+  </section>
+</main>
+
+<script src="js/core.js"></script>
+<script src="js/suffix-trie.js"></script>
+<script src="js/suffix-tree.js"></script>
+<script src="js/suffix-array.js"></script>
+<script src="js/bwt.js"></script>
+<script src="js/tree-view.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
